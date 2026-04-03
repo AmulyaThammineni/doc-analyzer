@@ -1,6 +1,3 @@
-from dotenv import load_dotenv
-load_dotenv(override=False)
-
 import os
 import base64
 import json
@@ -16,7 +13,7 @@ from io import BytesIO
 import logging
 import httpx
 
-# Windows Tesseract path
+# Windows Tesseract path (only used locally)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 logging.basicConfig(level=logging.INFO)
@@ -31,9 +28,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = os.getenv("API_KEY", "sk_track2_987654321")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
@@ -44,6 +38,7 @@ class DocumentRequest(BaseModel):
 
 
 def verify_api_key(api_key: str = Security(api_key_header)):
+    API_KEY = os.environ.get("API_KEY", "sk_track2_987654321")
     if not api_key or api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return api_key
@@ -101,8 +96,14 @@ Rules:
 - sentiment: Positive means good news/praise/success, Negative means complaints/issues/failures, Neutral means factual/informational
 """
 
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
+    logger.info(f"Using Gemini model: {model}")
+    logger.info(f"Key present: {bool(gemini_key)}")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+
     payload = {
         "contents": [
             {
@@ -117,7 +118,6 @@ Rules:
     data = response.json()
     raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-    # Strip markdown fences if present
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
