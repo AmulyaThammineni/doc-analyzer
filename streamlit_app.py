@@ -1,12 +1,13 @@
 import json
 import os
+import base64
+import requests
 from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.analyzer import analyze_document_bytes_sync, detect_file_type
-
+from src.analyzer import detect_file_type
 
 load_dotenv(override=False)
 
@@ -14,10 +15,7 @@ st.set_page_config(page_title="Doc Analyzer", page_icon="📄", layout="wide")
 
 APP_CSS = """
 <style>
-  /* wider + cleaner top spacing */
   .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1200px; }
-
-  /* subtle cards */
   .da-card {
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
@@ -47,18 +45,18 @@ st.markdown(
 
 with st.sidebar:
     st.header("Settings")
-    st.text_input(
-        "Gemini Model (GEMINI_MODEL)",
-        value=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-        help="Defaults to gemini-2.5-flash.",
-        key="gemini_model",
+    railway_url = st.text_input(
+        "Railway API URL",
+        value=os.environ.get("RAILWAY_API_URL", "https://your-railway-app.up.railway.app"),
+        help="Your deployed Railway backend URL",
+    )
+    api_key = st.text_input(
+        "API Key",
+        value=os.environ.get("API_KEY", "sk_track2_987654321"),
+        type="password",
+        help="The x-api-key for your backend",
     )
     st.checkbox("Show extracted text", value=False, key="show_text")
-
-
-def sync_env_from_ui() -> None:
-    if st.session_state.get("gemini_model"):
-        os.environ["GEMINI_MODEL"] = st.session_state["gemini_model"]
 
 
 uploaded = st.file_uploader(
@@ -76,7 +74,6 @@ with col_c:
 
 
 if run and uploaded is not None:
-    sync_env_from_ui()
 
     file_name = uploaded.name
     file_bytes = uploaded.getvalue()
@@ -89,13 +86,39 @@ if run and uploaded is not None:
         st.error("Could not detect file type. Please choose PDF / DOCX / Image from the dropdown.")
         st.stop()
 
-    if not os.environ.get("GEMINI_API_KEY"):
-        st.error("Missing GEMINI_API_KEY. Put it in your `.env` (recommended) or environment variables.")
+    if not railway_url or "your-railway-app" in railway_url:
+        st.error("Please enter your actual Railway API URL in the sidebar.")
         st.stop()
 
     with st.spinner("Extracting text and running AI analysis…"):
         try:
-            result = analyze_document_bytes_sync(file_bytes, file_name, file_type)
+            endpoint = f"{railway_url.rstrip('/')}/api/document-analyze"
+            headers = {"x-api-key": api_key}
+            payload = {
+                "fileName": file_name,
+                "fileType": file_type,
+                "fileBase64": base64.b64encode(file_bytes).decode()
+            }
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=120)
+
+            if response.status_code == 401:
+                st.error("Invalid API key. Check the API Key in the sidebar.")
+                st.stop()
+            elif response.status_code == 400:
+                st.error(f"Bad request: {response.text}")
+                st.stop()
+            elif response.status_code != 200:
+                st.error(f"API error {response.status_code}: {response.text}")
+                st.stop()
+
+            result = response.json()
+
+        except requests.exceptions.ConnectionError:
+            st.error("Could not connect to Railway API. Check your Railway URL in the sidebar.")
+            st.stop()
+        except requests.exceptions.Timeout:
+            st.error("Request timed out. The document may be too large or the server is busy.")
+            st.stop()
         except Exception as e:
             st.error(str(e))
             st.stop()
@@ -159,4 +182,3 @@ if run and uploaded is not None:
         file_name=f"{os.path.splitext(file_name)[0]}_analysis.json",
         mime="application/json",
     )
-
