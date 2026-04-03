@@ -43,21 +43,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+RAILWAY_URL = "https://doc-analyzer-production-1e83.up.railway.app"
+API_KEY = "sk_track2_987654321"
+
 with st.sidebar:
     st.header("Settings")
-    railway_url = st.text_input(
-        "Railway API URL",
-        value=os.environ.get("RAILWAY_API_URL", "https://your-railway-app.up.railway.app"),
-        help="Your deployed Railway backend URL",
-    )
-    api_key = st.text_input(
-        "API Key",
-        value=os.environ.get("API_KEY", "sk_track2_987654321"),
-        type="password",
-        help="The x-api-key for your backend",
-    )
     st.checkbox("Show extracted text", value=False, key="show_text")
-
 
 uploaded = st.file_uploader(
     "Upload a document",
@@ -86,14 +77,10 @@ if run and uploaded is not None:
         st.error("Could not detect file type. Please choose PDF / DOCX / Image from the dropdown.")
         st.stop()
 
-    if not railway_url or "your-railway-app" in railway_url:
-        st.error("Please enter your actual Railway API URL in the sidebar.")
-        st.stop()
-
     with st.spinner("Extracting text and running AI analysis…"):
         try:
-            endpoint = f"{railway_url.rstrip('/')}/api/document-analyze"
-            headers = {"x-api-key": api_key}
+            endpoint = f"{RAILWAY_URL}/api/document-analyze"
+            headers = {"x-api-key": API_KEY}
             payload = {
                 "fileName": file_name,
                 "fileType": file_type,
@@ -102,7 +89,7 @@ if run and uploaded is not None:
             response = requests.post(endpoint, json=payload, headers=headers, timeout=120)
 
             if response.status_code == 401:
-                st.error("Invalid API key. Check the API Key in the sidebar.")
+                st.error("Invalid API key. Check your Railway environment variables.")
                 st.stop()
             elif response.status_code == 400:
                 st.error(f"Bad request: {response.text}")
@@ -114,7 +101,7 @@ if run and uploaded is not None:
             result = response.json()
 
         except requests.exceptions.ConnectionError:
-            st.error("Could not connect to Railway API. Check your Railway URL in the sidebar.")
+            st.error("Could not connect to Railway API. Check if your Railway service is running.")
             st.stop()
         except requests.exceptions.Timeout:
             st.error("Request timed out. The document may be too large or the server is busy.")
