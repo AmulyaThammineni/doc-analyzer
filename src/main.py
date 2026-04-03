@@ -97,12 +97,12 @@ Rules:
 """
 
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     logger.info(f"Using Gemini model: {model}")
     logger.info(f"Key present: {bool(gemini_key)}")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     payload = {
         "contents": [
