@@ -111,7 +111,13 @@ Rules:
         ]
     }
 
-    response = httpx.post(url, json=payload, timeout=30)
+    import time
+    for attempt in range(3):
+        response = httpx.post(url, json=payload, timeout=30)
+        if response.status_code == 429:
+            time.sleep(15)
+            continue
+        break
     response.raise_for_status()
 
     data = response.json()
