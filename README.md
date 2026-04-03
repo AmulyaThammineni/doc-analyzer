@@ -232,10 +232,9 @@ Every request must include `x-api-key` header. Invalid or missing keys return `4
 ## Known Limitations
 
 - Free tier Gemini API has rate limits — may return 429 under heavy load
+- Railway free tier may have cold start delays of 10-30 seconds on first request
 - Scanned PDFs without embedded text may have lower OCR accuracy
 - Documents are truncated to 8000 characters before sending to Gemini
-- Railway free tier may have cold start delays of 10-30 seconds on first request
-- Tesseract accuracy depends on image quality and resolution
 
 ---
 
