@@ -13,14 +13,15 @@ from io import BytesIO
 import logging
 import httpx
 
-# Windows Tesseract path (only used locally)
+# Tesseract path (Windows local setup)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI Document Analysis API", version="1.0.0")
+app = FastAPI(title="AI Document Analysis API", version="2.0.0")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,6 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API Key Security
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
@@ -44,6 +46,8 @@ def verify_api_key(api_key: str = Security(api_key_header)):
     return api_key
 
 
+# ---------------- TEXT EXTRACTION ---------------- #
+
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     text_parts = []
     with fitz.open(stream=file_bytes, filetype="pdf") as doc:
@@ -55,11 +59,13 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 def extract_text_from_docx(file_bytes: bytes) -> str:
     doc = Document(BytesIO(file_bytes))
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+
     for table in doc.tables:
         for row in table.rows:
             row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
             if row_text:
                 paragraphs.append(row_text)
+
     return "\n".join(paragraphs).strip()
 
 
@@ -69,7 +75,9 @@ def extract_text_from_image(file_bytes: bytes) -> str:
     return text.strip()
 
 
-def analyze_with_gemini(text: str, file_name: str) -> dict:
+# ---------------- GEMINI ANALYSIS ---------------- #
+
+async def analyze_with_gemini(text: str, file_name: str) -> dict:
     prompt = f"""You are a document analysis AI. Analyze the following document text and return a JSON response.
 
 Document: {file_name}
@@ -79,30 +87,30 @@ Text:
 
 Return ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
 {{
-  "summary": "A concise 1-3 sentence summary of the document content",
+  "summary": "A concise 1-3 sentence summary",
   "entities": {{
-    "names": ["list of person names found"],
-    "dates": ["list of dates found"],
-    "organizations": ["list of organization/company names found"],
-    "amounts": ["list of monetary amounts found"],
-    "locations": ["list of locations/places found"]
+    "names": [],
+    "dates": [],
+    "organizations": [],
+    "amounts": [],
+    "locations": []
   }},
   "sentiment": "Positive or Neutral or Negative"
 }}
-
-Rules:
-- summary: Capture the core purpose and content of the document
-- entities: Extract ALL named entities present. Use empty arrays if none found
-- sentiment: Positive means good news/praise/success, Negative means complaints/issues/failures, Neutral means factual/informational
 """
 
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 
-    logger.info(f"Using Gemini model: {model}")
-    logger.info(f"Key present: {bool(gemini_key)}")
+    if not gemini_key:
+        raise Exception("GEMINI_API_KEY is missing")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": gemini_key
+    }
 
     payload = {
         "contents": [
@@ -112,24 +120,45 @@ Rules:
         ]
     }
 
-    response = httpx.post(url, json=payload, timeout=30)
-    response.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Gemini API error: {e.response.text}")
+        raise Exception(f"Gemini API failed: {e.response.text}")
+    except Exception as e:
+        logger.error(f"Request failed: {str(e)}")
+        raise Exception(f"Request failed: {str(e)}")
 
     data = response.json()
-    raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
+    try:
+        raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except (KeyError, IndexError):
+        logger.error(f"Unexpected response: {data}")
+        raise Exception("Invalid response format from AI")
+
+    # Clean markdown formatting
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
+
     raw = raw.strip()
 
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error(f"JSON parse failed. Raw: {raw}")
+        raise Exception("Failed to parse AI response")
 
+
+# ---------------- ROUTES ---------------- #
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "AI Document Analysis API is running"}
+    return {"status": "ok", "message": "AI Document Analysis API is running 🚀"}
 
 
 @app.get("/health")
@@ -143,31 +172,34 @@ async def analyze_document(
     api_key: str = Depends(verify_api_key)
 ):
     file_type = request.fileType.lower().strip()
+
     if file_type not in ["pdf", "docx", "image"]:
-        raise HTTPException(status_code=400, detail="Unsupported fileType. Use pdf, docx, or image.")
+        raise HTTPException(status_code=400, detail="Use pdf, docx, or image")
 
     try:
         file_bytes = base64.b64decode(request.fileBase64)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid base64 encoded file.")
+        raise HTTPException(status_code=400, detail="Invalid base64 file")
 
+    # Extract text
     try:
         if file_type == "pdf":
             extracted_text = extract_text_from_pdf(file_bytes)
         elif file_type == "docx":
             extracted_text = extract_text_from_docx(file_bytes)
-        elif file_type == "image":
+        else:
             extracted_text = extract_text_from_image(file_bytes)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to extract text: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Text extraction failed: {str(e)}")
 
     if not extracted_text:
-        raise HTTPException(status_code=422, detail="No text could be extracted.")
+        raise HTTPException(status_code=422, detail="No text extracted")
 
+    # AI Analysis
     try:
-        analysis = analyze_with_gemini(extracted_text, request.fileName)
+        analysis = await analyze_with_gemini(extracted_text, request.fileName)
     except Exception as e:
-        logger.error(f"Gemini error: {e}")
+        logger.error(f"AI error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
 
     return {
@@ -175,8 +207,11 @@ async def analyze_document(
         "fileName": request.fileName,
         "summary": analysis.get("summary", ""),
         "entities": analysis.get("entities", {
-            "names": [], "dates": [],
-            "organizations": [], "amounts": [], "locations": []
+            "names": [],
+            "dates": [],
+            "organizations": [],
+            "amounts": [],
+            "locations": []
         }),
         "sentiment": analysis.get("sentiment", "Neutral")
     }
