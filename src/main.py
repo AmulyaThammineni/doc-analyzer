@@ -100,13 +100,12 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
 """
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
-    model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+    model = "gemini-2.5-flash"
 
     if not gemini_key:
         raise Exception("GEMINI_API_KEY is missing")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": gemini_key
