@@ -1,7 +1,7 @@
 import os
 import base64
 import json
-import fitz  # PyMuPDF
+import fitz  
 import pytesseract
 from PIL import Image
 from docx import Document
@@ -13,7 +13,6 @@ from io import BytesIO
 import logging
 import httpx
 
-# Tesseract path (Windows local setup)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 logging.basicConfig(level=logging.INFO)
@@ -45,9 +44,6 @@ def verify_api_key(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return api_key
 
-
-# ---------------- TEXT EXTRACTION ---------------- #
-
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     text_parts = []
     with fitz.open(stream=file_bytes, filetype="pdf") as doc:
@@ -73,9 +69,6 @@ def extract_text_from_image(file_bytes: bytes) -> str:
     image = Image.open(BytesIO(file_bytes))
     text = pytesseract.image_to_string(image, config="--psm 6")
     return text.strip()
-
-
-# ---------------- GEMINI ANALYSIS ---------------- #
 
 async def analyze_with_gemini(text: str, file_name: str) -> dict:
     prompt = f"""You are a document analysis AI. Analyze the following document text and return a JSON response.
@@ -153,11 +146,9 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         raise Exception("Failed to parse AI response")
 
 
-# ---------------- ROUTES ---------------- #
-
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "AI Document Analysis API is running 🚀"}
+    return {"status": "ok", "message": "AI Document Analysis API is running"}
 
 
 @app.get("/health")
