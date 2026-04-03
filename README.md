@@ -167,10 +167,35 @@ GEMINI_MODEL=gemini-2.5-flash
 ### Step 6 — Run
 
 ```bash
-uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Visit `http://localhost:8000` — should show `{"status":"ok"}`
+
+---
+
+## Streamlit UI (Optional Demo)
+
+This UI is an optional add-on for quick demos and local testing. The core submission is the FastAPI endpoint (`/api/document-analyze`).
+
+### Run the UI
+
+Make sure you have your environment variables set (at minimum `GEMINI_API_KEY`). Then:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+### Recommended: use `.env` (no manual entry in the UI)
+
+Create a `.env` file in the project root:
+
+```
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+The Streamlit UI automatically loads `.env`.
 
 ---
 

@@ -1,19 +1,12 @@
 import os
 import base64
-import json
-import fitz  
-import pytesseract
-from PIL import Image
-from docx import Document
+import logging
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from io import BytesIO
-import logging
-import httpx
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+from src.analyzer import analyze_document_bytes, extract_text, analyze_with_gemini
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,107 +37,6 @@ def verify_api_key(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return api_key
 
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    text_parts = []
-    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-        for page in doc:
-            text_parts.append(page.get_text())
-    return "\n".join(text_parts).strip()
-
-
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    doc = Document(BytesIO(file_bytes))
-    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-
-    for table in doc.tables:
-        for row in table.rows:
-            row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
-            if row_text:
-                paragraphs.append(row_text)
-
-    return "\n".join(paragraphs).strip()
-
-
-def extract_text_from_image(file_bytes: bytes) -> str:
-    image = Image.open(BytesIO(file_bytes))
-    text = pytesseract.image_to_string(image, config="--psm 6")
-    return text.strip()
-
-async def analyze_with_gemini(text: str, file_name: str) -> dict:
-    prompt = f"""You are a document analysis AI. Analyze the following document text and return a JSON response.
-
-Document: {file_name}
-
-Text:
-{text[:8000]}
-
-Return ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
-{{
-  "summary": "A concise 1-3 sentence summary",
-  "entities": {{
-    "names": [],
-    "dates": [],
-    "organizations": [],
-    "amounts": [],
-    "locations": []
-  }},
-  "sentiment": "Positive or Neutral or Negative"
-}}
-"""
-
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    model = "gemini-2.5-flash"
-
-    if not gemini_key:
-        raise Exception("GEMINI_API_KEY is missing")
-
-    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent"
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": gemini_key
-    }
-
-    payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
-        ]
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Gemini API error: {e.response.text}")
-        raise Exception(f"Gemini API failed: {e.response.text}")
-    except Exception as e:
-        logger.error(f"Request failed: {str(e)}")
-        raise Exception(f"Request failed: {str(e)}")
-
-    data = response.json()
-
-    try:
-        raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError):
-        logger.error(f"Unexpected response: {data}")
-        raise Exception("Invalid response format from AI")
-
-    # Clean markdown formatting
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
-    raw = raw.strip()
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        logger.error(f"JSON parse failed. Raw: {raw}")
-        raise Exception("Failed to parse AI response")
-
 
 @app.get("/")
 def root():
@@ -171,37 +63,14 @@ async def analyze_document(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 file")
 
-    # Extract text
     try:
-        if file_type == "pdf":
-            extracted_text = extract_text_from_pdf(file_bytes)
-        elif file_type == "docx":
-            extracted_text = extract_text_from_docx(file_bytes)
-        else:
-            extracted_text = extract_text_from_image(file_bytes)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Text extraction failed: {str(e)}")
-
-    if not extracted_text:
-        raise HTTPException(status_code=422, detail="No text extracted")
-
-    # AI Analysis
-    try:
-        analysis = await analyze_with_gemini(extracted_text, request.fileName)
+        result = await analyze_document_bytes(file_bytes, request.fileName, file_type)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"AI error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
 
-    return {
-        "status": "success",
-        "fileName": request.fileName,
-        "summary": analysis.get("summary", ""),
-        "entities": analysis.get("entities", {
-            "names": [],
-            "dates": [],
-            "organizations": [],
-            "amounts": [],
-            "locations": []
-        }),
-        "sentiment": analysis.get("sentiment", "Neutral")
-    }
+    # Keep API response shape stable (don’t include extractedText by default).
+    result.pop("extractedText", None)
+    return result
